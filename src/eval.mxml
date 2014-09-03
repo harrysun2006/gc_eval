@@ -1,0 +1,212 @@
+<?xml version="1.0" encoding="utf-8"?>
+<mx:Application xmlns:mx="http://www.adobe.com/2006/mxml" layout="absolute" width="640"
+                horizontalScrollPolicy="off" verticalScrollPolicy="off" creationComplete="created()">
+  <mx:VBox height="100%" width="100%" paddingLeft="6" paddingTop="6" paddingRight="6"
+           paddingBottom="6">
+    <mx:HBox width="100%">
+      <mx:Label text="Expression: "/>
+      <mx:ComboBox id="cbExpr" editable="true" width="440"/>
+      <mx:Button label="Parse &amp; Eval" click="test1(event)"/>
+    </mx:HBox>
+    <mx:DataGrid dataProvider="{results}" width="100%" sortableColumns="false">
+      <mx:columns>
+        <mx:DataGridColumn dataField="expr" width="300"/>
+        <mx:DataGridColumn dataField="error" width="120"/>
+        <mx:DataGridColumn dataField="symbols" width="120"/>
+        <mx:DataGridColumn dataField="value" width="60"/>
+      </mx:columns>
+    </mx:DataGrid>
+    <mx:HBox width="100%">
+      <mx:Button label="Clear" click="clear(event)"/>
+      <mx:Button label="Test2" click="test2()"/>
+      <mx:Button label="Test3" click="test3()"/>
+      <mx:Button label="Test4" click="test4()"/>
+    </mx:HBox>
+  </mx:VBox>
+  <mx:Script>
+    <![CDATA[
+      import mx.collections.ArrayCollection;
+      import bee.eval.ParseError;
+      import bee.eval.Compiler;
+      import bee.eval.Ident;
+      import bee.eval.Parser;
+      import bee.eval.Scanner;
+      import bee.eval.Token;
+      import bee.eval.Util;
+
+      [Bindable]
+      private var results:ArrayCollection=new ArrayCollection();
+      private var list:ArrayCollection=new ArrayCollection();
+
+      private function created():void
+      {
+        list.addItem("o1+99");
+        list.addItem("s2(o1)+s2(o2)");
+        list.addItem("s1(o1)+s2(o2)");
+        list.addItem("s1(abc)+s1(xyz)");
+        list.addItem("7+random()");
+        list.addItem("min(x, y, max(a,b, sqrt(16)))");
+        list.addItem("(x+3)*(y-3)/(a+b+1)+max(x, y)");
+        list.addItem("(x+3)*(y-3)/(a+b+1)+sqrt(c)");
+        cbExpr.dataProvider=list;
+        cbExpr.selectedIndex=0;
+      }
+
+      private function clear(event:Event):void
+      {
+        results.removeAll();
+      }
+
+
+      private function validate(ys:Array, es:Array, exprs:Object, callback:Function=null):void
+      {
+        var r:Object;
+        var e:String;
+        var f:Function=function(r:Object):void
+          {
+            var s:String;
+            var n:String, t:String, z:String, id:String;
+            t="";
+            for (n in r.error) t+=n+": "+r.error[n]+", ";
+            s="error: {"+t.substr(0, t.length-2)
+              +"}, valid: "+r.valid 
+              +", queue: ["+r.queue+"], miss: ";
+            z="";
+            for (n in r.miss) 
+            {
+              t="";
+              for each (id in r.miss[n]) t+=id+", ";
+              z+=n+": ["+t.substr(0, t.length-2)+"], ";
+            }
+            s+="{"+z.substr(0, z.length-2)+"}";
+            trace(s);
+          }
+        for each (e in ys)
+        {
+          exprs.y=e;
+          r=Util.validate(exprs, callback);
+          f(r);
+        }
+        for each (e in es)
+        {
+          r=Util.validate(e, callback);
+          f(r);
+        }
+      }
+
+      private function evaluate(ys:Array, es:Array, exprs:Object, callback:Function=null):void
+      {
+        var r:Object;
+        var e:String;
+        var f:Function=function(r:Object):void
+          {
+            var s:String;
+            var n:String, t:String;
+            t="";
+            for (n in r.error) t+=n+": "+r.error[n]+", ";
+            s="error: {"+t.substr(0, t.length-2)
+              +"}, valid: "+r.valid;
+            t="";
+            for (n in r.value) t+=n+"="+r.value[n]+", ";
+            s+=", value:{"+t.substr(0, t.length-2)+"}";
+            trace(s);
+          }
+        for each (e in ys)
+        {
+          exprs.y=e;
+          r=Util.evaluate(exprs, null, callback);
+          f(r);
+        }
+        for each (e in es)
+        {
+          r=Util.evaluate(e, {a:1, b:2, c:4, sqrt:Math.sqrt}, callback);
+          f(r);
+        }
+      }
+
+      private const _f1:Object={};
+      private const _f2:Function=function(n:Number):Number{return n+1;};
+      private const _f3:Function=function(n:Number):void{};
+      private const _f4:Function=function(n:Number):Boolean{return false;};
+      private const _f5:Function=function(n:Number):Date{return new Date();};
+      private const _f6:Function=function(n1:Number, n2:Number):Number{return n1+n2;};
+      private const _f7:Function=function(n:Number):Number{throw new Error("hello", 999);};
+      private const _s1:Function=function(obj:Object, x:Number=0):Number
+        {
+          var s:String = (obj && obj.xx) ? obj.xx : null;
+          var y:Number = (s == "abc" ? 11 : s == "xyz" ? 99 : s ? Number(s) : 0);
+          return x+y;
+        };
+      private const _s2:Function=function(obj:Object, x:Number=0):Number
+        {
+          var y:Number = (obj && obj.xx) ? Number(obj.xx) : 0;
+          return x+y;
+        };
+      private const _s3:Function=function(d:Date):Number{return d.date+1;}
+
+      private const EXPRS:Object={a:2, b:9, c:18, d:10, z:"x+y", y:"", x:"a*(b+3*sqrt(b))", u:"s1(o3)",
+          pi:Math.PI, e:new Date(), ln2:{}, sqrt:Math.sqrt,
+          f1:_f1, f2:_f2, f3:_f3, f4:_f4, f5:_f5, f6:_f6, f7:_f7, 
+          s1:_s1, s2:_s2, s3:_s3, o1:{xx:"abc"}, o2:{xx:"xyz"}, o3:{xx:"77"}};
+
+      private function test1(event:Event):void
+      {
+        var r:Object={expr:cbExpr.text, error:"", value:null};
+        try
+        {
+          var e:String=r.expr;
+          var s:Scanner=new Scanner(e);
+          var p:Parser=new Parser(s);
+          var c:Compiler=p.parse();
+          r.symbols=c.symbols;
+          r.value=c.execute({x:2, y:6, a:1, b:1, c:9, 
+              random:Math.random, min:Math.min, max:Math.max, sqrt:Math.sqrt, 
+              s1:_s1, s2:_s2, o1:{xx:1}, o2:{xx:6}, abc:{xx:"abc"}, xyz:{xx:"xyz"}});
+          if (!list.contains(r.expr))
+            list.addItem(r.expr);
+        }
+        catch (pe:ParseError)
+        {
+          r.error=pe.message;
+        }
+        results.addItem(r);
+      }
+
+      private function test2():void
+      {
+        var ys0:Array=["c/(d-7)", "c/(d-7)+x", "y+3", "c/(d-7)+z", "c/(d-7)+abs(x)", 
+          "c**(d-7)", "!c/(d-7)", "c/(d-7", "c/d-7)",	"a+pi+e+ln2"];
+        var ys1:Array=["s1(o1, 77) + s1(o2, -77)"];
+        var ys:Array=["c/(d-7)+xx"];
+        var es:Array=["(x+3)*(y-3)/(a+b+1)+sqrt(c)", "(3+3)*(7-3)/(1+2+1)"];
+        validate(ys, es, EXPRS);
+      }
+
+      private function test3():void
+      {
+        var ys0:Array=["c/(d-7)", "c/(d-7)+x", "y+3", "c/(d-7)+z", "c/(d-7)+abs(x)", 
+          "c**(d-7)", "!c/(d-7)", "c/(d-7", "c/d-7)",	"a+pi+e+ln2", "a+b/(c-8)",
+          "a+f1()", "a+f1(b)", "a+f2(b)", "a+f3(b)", "a+f4(b)", "a+f5(b)", 
+          "a+f6(b)", "a+f7(b)", "a+c/(b-9)", "a+f2(b,c)"];
+        var ys1:Array=["a+f6(b)", "a+f7(b)", "a+c/(b-9)", "a+f2(b,c)"];
+        var ys:Array=["s1(o1, 77)", "s1(o2, -77)", "s1(o3, 22)", "s1(null, -11)", "s3(e)", "o1+99"];
+        var es:Array=["(a+b+1)+sqrt(c)", "(x+3)*(y-3)/(a+b+1)+sqrt(c)", "(3+3)*(7-3)/(1+2+1)"];
+        var ff:Function=function(obj:Object):Boolean{return false;};
+        evaluate(ys, es, EXPRS, ff);
+      }
+
+      /**
+       * 求值时context的值会覆盖exprs
+       **/
+      private function test4():void
+      {
+        var exprs:Object={x:1, y:2, z:"x+y"};
+        var context:Object={x:6};
+        var r:Object=Util.evaluate(exprs, context);
+        trace(r.value.z);
+        r=Util.evaluate(exprs);
+        trace(r.value.z);
+      }
+    ]]>
+  </mx:Script>
+</mx:Application>
